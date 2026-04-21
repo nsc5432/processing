@@ -2,7 +2,10 @@ package aoms.pm;
 
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 public class ShowUpRate {
 
@@ -17,28 +20,24 @@ public class ShowUpRate {
         "-110분", "-120분", "-130분", "-140분", "-150분", "-160분", "-170분", "-180분", "-190분", "-200분",
         "-210분", "-220분", "-230분", "-240분", "-250분", "-260분", "-270분", "-280분", "-290분", "-300분"
     };
-	/**
-     * 1. 당일 관측 분포 (Likelihood) 산출 함수
-     * * @param stdTime 운항편 출발 예정 시간 (STD)
-     * @param passengerTimes 승객별 태깅(또는 도착) 시간 리스트
-     * @param binEdges 시간 구간 경계값 배열
-     * @return 구간별 출현 비율 배열 (Likelihood)
+
+    private static final String[] PERIODS = {"P1", "P2", "P3", "P4"};
+
+    /**
+     * 1. 당일 관측 분포 (Likelihood) 산출
      */
     public static double[] calculateLikelihoodDistribution(
-        LocalDateTime stdTime, 
-        List<LocalDateTime> passengerTimes, 
+        LocalDateTime stdTime,
+        List<LocalDateTime> passengerTimes,
         int[] binEdges
     ) {
-        
         int numBins = binEdges.length - 1;
         int[] counts = new int[numBins];
         int validPassengers = 0;
 
         for (LocalDateTime pTime : passengerTimes) {
-            // 출발시간 기준 몇 분 전에 도착했는지 계산
             long diffMinutes = Duration.between(stdTime, pTime).toMinutes() * -1;
 
-            // 어느 구간(Bin)에 속하는지 확인 (lowerBound <= diff < upperBound)
             for (int i = 0; i < numBins; i++) {
                 if (binEdges[i] <= diffMinutes && diffMinutes < binEdges[i + 1]) {
                     counts[i]++;
@@ -49,33 +48,22 @@ public class ShowUpRate {
         }
 
         double[] likelihoodDist = new double[numBins];
-        
-        // 관측된 승객이 없는 경우 0.0 배열 반환 (ZeroDivision 방지)
-        if (validPassengers == 0) {
-            return likelihoodDist;
-        }
+        if (validPassengers == 0) return likelihoodDist;
 
-        // 전체 관측 승객 대비 각 구간의 비율 계산
         for (int i = 0; i < numBins; i++) {
             likelihoodDist[i] = (double) counts[i] / validPassengers;
         }
-
         return likelihoodDist;
     }
 
     /**
-     * 2. 사후 확률 (Posterior) 보정 함수
-     * * @param priorDist 과거 평균 분포 배열 (사전 확률)
-     * @param likelihoodDist 당일 관측 분포 배열 (우도)
-     * @param observationWeight 당일 관측치 반영 강도 (0.0 ~ 1.0)
-     * @return 융합된 최종 사후 확률 분포 배열
+     * 2. 사후 확률 (Posterior) 보정
      */
     public static double[] calculatePosteriorDistribution(
-        double[] priorDist, 
-        double[] likelihoodDist, 
+        double[] priorDist,
+        double[] likelihoodDist,
         double observationWeight
     ) {
-        
         if (priorDist.length != likelihoodDist.length) {
             throw new IllegalArgumentException("사전 확률 배열과 우도 배열의 길이가 같아야 합니다.");
         }
@@ -84,38 +72,86 @@ public class ShowUpRate {
         double[] posteriorDist = new double[length];
         double priorWeight = 1.0 - observationWeight;
 
-        // 디리클레 가중 평균 방식을 이용한 확률 업데이트
         for (int i = 0; i < length; i++) {
             posteriorDist[i] = (priorDist[i] * priorWeight) + (likelihoodDist[i] * observationWeight);
         }
-
         return posteriorDist;
     }
-    
-	public static void main(String[] args) {
-        // 1. 초기 데이터 셋업 (MockData에서 import)
-        LocalDateTime stdTime = MockData.STD_TIME;
-        List<LocalDateTime> passengerTimes = MockData.PASSENGER_TIMES;
-        double[] priorDist = MockData.PRIOR_DIST;
 
-        // 반영 강도 설정
+    /**
+     * 3. STD 시간대 구분
+     * P1: 00~05시 59분 / P2: 06~06시 59분 / P3: 07~22시 59분 / P4: 23~23시 59분
+     */
+    public static String classifyTimePeriod(LocalDateTime stdTime) {
+        int hour = stdTime.getHour();
+        if (hour < 6)  return "P1";
+        if (hour < 7)  return "P2";
+        if (hour < 23) return "P3";
+        return "P4";
+    }
+
+    /**
+     * 4. 복수 사후확률 배열의 평균 산출
+     * 반환값이 다음 실행의 사전확률(Prior)로 사용됨
+     */
+    public static double[] averagePosteriors(List<double[]> posteriors) {
+        int numBins = BIN_EDGES.length - 1;
+        double[] avg = new double[numBins];
+        if (posteriors.isEmpty()) return avg;
+
+        for (double[] posterior : posteriors) {
+            for (int i = 0; i < numBins; i++) {
+                avg[i] += posterior[i];
+            }
+        }
+        for (int i = 0; i < numBins; i++) {
+            avg[i] /= posteriors.size();
+        }
+        return avg;
+    }
+
+    public static void main(String[] args) {
         double observationWeight = 0.8;
 
-        // 2. 당일 관측 분포(Likelihood) 산출
-        double[] likelihoodDist = calculateLikelihoodDistribution(stdTime, passengerTimes, BIN_EDGES);
-
-        // 3. 사후 확률(Posterior) 보정
-        double[] posteriorDist = calculatePosteriorDistribution(priorDist, likelihoodDist, observationWeight);
-
-        // 4. 결과 출력
-        System.out.printf("%-12s | %-10s | %-10s | %-10s\n", "시간 구간", "과거(Prior)", "당일(Likelihood)", "최종(Posterior)");
-        System.out.println("=========================================================");
-        for (int i = 0; i < BIN_LABELS.length; i++) {
-            System.out.printf("%-12s | %9.4f | %12.4f | %11.4f\n",
-                BIN_LABELS[i],
-                priorDist[i],
-                likelihoodDist[i],
-                posteriorDist[i]);
+        // 시간대별 posterior 수집 버킷 초기화
+        Map<String, List<double[]>> posteriorsByPeriod = new LinkedHashMap<>();
+        for (String period : PERIODS) {
+            posteriorsByPeriod.put(period, new ArrayList<>());
         }
-	}
+
+        // 각 운항편 처리: prior는 실행 내 고정
+        for (LocalDateTime stdTime : MockData.STD_TIMES) {
+            String period = classifyTimePeriod(stdTime);
+            List<LocalDateTime> passengerTimes = MockData.PASSENGER_TIMES_BY_FLIGHT.get(stdTime);
+            double[] prior = MockData.PRIOR_BY_PERIOD.get(period);
+
+            double[] likelihood = calculateLikelihoodDistribution(stdTime, passengerTimes, BIN_EDGES);
+            double[] posterior  = calculatePosteriorDistribution(prior, likelihood, observationWeight);
+
+            posteriorsByPeriod.get(period).add(posterior);
+        }
+
+        // 시간대별 평균 posterior 출력
+        System.out.println("=== ShowUp Rate 사후확률 분석 결과 ===");
+        System.out.printf("반영 강도(observationWeight): %.1f%n%n", observationWeight);
+
+        for (String period : PERIODS) {
+            List<double[]> posteriors = posteriorsByPeriod.get(period);
+            double[] prior = MockData.PRIOR_BY_PERIOD.get(period);
+            int count = posteriors.size();
+
+            // 기여 운항편 0개 → prior를 최종값으로 그대로 사용
+            double[] finalPosterior = count > 0 ? averagePosteriors(posteriors) : prior;
+            String note = count == 0 ? " (관측 없음 — Prior 유지)" : "";
+
+            System.out.printf("[%s] 기여 운항편: %d개%s%n", period, count, note);
+            System.out.printf("%-12s | %-10s | %-14s%n", "시간 구간", "사전확률", "평균 사후확률");
+            System.out.println("=".repeat(44));
+            for (int i = 0; i < BIN_LABELS.length; i++) {
+                System.out.printf("%-12s | %9.4f | %14.4f%n",
+                    BIN_LABELS[i], prior[i], finalPosterior[i]);
+            }
+            System.out.println();
+        }
+    }
 }
