@@ -141,7 +141,7 @@ public class ShowUpRate {
             int count = posteriors.size();
 
             // 기여 운항편 0개 → prior를 최종값으로 그대로 사용
-            double[] finalPosterior = count > 0 ? averagePosteriors(posteriors) : prior;
+            double[] finalPosterior = DistributionUtils.roundAndNormalize(count > 0 ? averagePosteriors(posteriors) : prior);
             String note = count == 0 ? " (관측 없음 — Prior 유지)" : "";
 
             System.out.printf("[%s] 기여 운항편: %d개%s%n", period, count, note);
