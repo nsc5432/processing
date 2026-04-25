@@ -21,7 +21,7 @@ public class DistributionUtils {
             sum += rounded[i];
         }
 
-        double error = round(1.0 - sum, decimalPlaces);
+        double error = 1.0 - round(sum, decimalPlaces);
         if (error != 0.0) {
             int maxIdx = 0;
             for (int i = 1; i < length; i++) {
